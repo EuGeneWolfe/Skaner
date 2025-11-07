@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skaner Rodzin</title>
+    <!-- 1. Ładujemy Tailwind CSS dla szybkiego i ładnego UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. Ładujemy stabilną wersję biblioteki do skanowania QR, dodano 'defer' -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" defer></script>
+    
+    <style>
+        /* Prosty spinner ładowania */
+        #loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Ukrywanie elementów */
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+        
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Skaner Rodzin</h1>
+
+        <!-- ==== SEKCJA LOGOWANIA ==== -->
+        <!-- DOMYŚLNIE WIDOCZNA, BO NIE MA AUTOMATYCZNEGO LOGOWANIA -->
+        <div id="login-section">
+            <h2 class="text-lg font-semibold text-center text-gray-700 mb-4">Zaloguj się</h2>
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label for="email" class="block text-sm font-medium text-gray-700">Email</label>
+                    <input type="email" id="email" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label for="password" class="block text-sm font-medium text-gray-700">Hasło</label>
+                    <input type="password" id="password" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <button type="submit" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    Zaloguj się
+                </button>
+            </form>
+            <p id="login-error" class="text-red-500 text-sm mt-2 text-center hidden"></p>
+        </div>
+
+        <!-- ==== GŁÓWNA SEKCJA APLIKACJI ==== -->
+        <!-- Ukrywana przed zalogowaniem -->
+        <div id="app-section" class="hidden">
+            
+            <div class="flex justify-between items-center mb-4">
+                <p class="text-sm text-gray-600">Zalogowano jako: <span id="user-email" class="font-medium"></span></p>
+                <button id="logout-button" class="text-sm text-blue-600 hover:underline">Wyloguj</button>
+            </div>
+
+            <p id="user-id-display" class="text-xs text-gray-400 mb-4 break-all"></p>
+            
+            <!-- **** PRZYCISK STARTU **** -->
+            <button id="start-scan-button" class="w-full mb-4 py-3 px-4 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 hidden">
+                Rozpocznij Skanowanie
+            </button>
+            
+            <!-- 3. Kontener, w którym biblioteka umieści widok kamery (domyślnie ukryty) -->
+            <div id="qr-reader" class="w-full rounded-md overflow-hidden border-2 border-gray-300 hidden"></div>
+
+            <button id="stop-button" class="hidden w-full mt-4 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700">
+                Zatrzymaj skaner
+            </button>
+
+            <!-- 4. Sekcja na status, błędy i wyniki (domyślnie ukryta) -->
+            <div id="status-section" class="mt-6 text-center hidden">
+                <!-- Spinner ładowania -->
+                <div id="loader" class="mx-auto hidden"></div>
+                
+                <!-- Komunikat o błędzie -->
+                <p id="error-message" class="text-red-600 font-semibold hidden"></p>
+                
+                <!-- Wyniki skanowania -->
+                <div id="result-display" class="hidden text-left p-4 bg-gray-50 rounded-lg">
+                    <!-- Dane rodziny będą wstrzykiwane tutaj -->
+                </div>
+
+                <button id="scan-again-button" class="hidden w-full mt-4 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
+                    Skanuj ponownie
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ==== 5. SKRYPTY JAVASCRIPT (LOGIKA APLIKACJI) ==== -->
+    <script type="module">
+        // Importowanie funkcji Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInWithEmailAndPassword,
+            onAuthStateChanged,
+            signOut
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            getDoc,
+            setLogLevel as setFirestoreLogLevel
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- KONFIGURACJA ---
+        // (Wklejony Twój poprawny config)
+        const firebaseConfig = {
+            apiKey: "AIzaSyCT-_-7PBMdhjnvD6Or1L2dSp9WuZ5JZZ8",
+            authDomain: "szpa-18bbc.firebaseapp.com",
+            projectId: "szpa-18bbc",
+            storageBucket: "szpa-18bbc.firebasestorage.app",
+            messagingSenderId: "352618370041",
+            appId: "1:352618370041:web:6dd22b97ebfd44f01aa328",
+            measurementId: "G-1KG6SWQ173"
+        };
+        // KONIEC KONFIGURACJI
+        
+        // Inicjalizacja Firebase (Tylko JEDEN RAZ)
+        let app;
+        let auth;
+        let db;
+        
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            
+            // Ustawienie logowania dla debuggowania
+            setFirestoreLogLevel('debug');
+            console.log("Firebase zainicjalizowany pomyślnie.");
+            
+        } catch (e) {
+             console.error("Błąd inicjalizacji Firebase:", e);
+             document.body.innerHTML = '<h1 style="color: red; text-align: center; margin-top: 50px;">Błąd inicjalizacji Firebase. Sprawdź konsolę.</h1>';
+             throw new Error("Błąd Firebase config.");
+        }
+
+        // Referencje do elementów DOM
+        const loginSection = document.getElementById('login-section');
+        const appSection = document.getElementById('app-section');
+        const loginForm = document.getElementById('login-form');
+        const loginError = document.getElementById('login-error');
+        const userEmail = document.getElementById('user-email');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const logoutButton = document.getElementById('logout-button');
+        
+        const startScanButton = document.getElementById('start-scan-button'); 
+        const qrReaderDiv = document.getElementById('qr-reader');
+        const stopButton = document.getElementById('stop-button');
+        const scanAgainButton = document.getElementById('scan-again-button');
+        
+        const statusSection = document.getElementById('status-section'); 
+        const loader = document.getElementById('loader');
+        const errorMessage = document.getElementById('error-message');
+        const resultDisplay = document.getElementById('result-display');
+
+        let html5QrCode = null;
+        let currentUserId = null;
+
+        // --- LOGIKA SKANERA ---
+
+        const onScanSuccess = async (decodedText, decodedResult) => {
+            console.log(`Code matched = ${decodedText}`, decodedResult);
+            
+            await stopScanner(); // To zatrzyma kamerę i pokaże przycisk "Start"
+            statusSection.classList.remove('hidden'); // Pokaż sekcję wyników
+            showLoading(true);
+            showError(null);
+            resultDisplay.classList.add('hidden');
+
+            if (!decodedText.startsWith("SLA-5590-") || decodedText.length < 15) {
+                showLoading(false);
+                showError(`Nieprawidłowy format kodu. Oczekiwano: SLA-5590-XXXXXX, odczytano: ${decodedText}`);
+                scanAgainButton.classList.remove('hidden'); // Pokaż "Skanuj Ponownie"
+                stopButton.classList.add('hidden'); // Ukryj "Stop"
+                qrReaderDiv.classList.add('hidden'); // Ukryj kamerę
+                return;
+            }
+
+            await fetchFamilyData(decodedText);
+        };
+
+        const onScanFailure = (error) => {
+            // Ignorujemy błędy "QR code not found"
+        };
+
+        const startScanner = () => {
+            if (!html5QrCode) {
+                try {
+                    if (typeof window.Html5Qrcode === 'undefined') {
+                        console.warn("Biblioteka Html5Qrcode jeszcze nie gotowa, próbuję ponownie za 100ms...");
+                        setTimeout(startScanner, 100); 
+                        return;
+                    }
+                    html5QrCode = new window.Html5Qrcode("qr-reader");
+                    console.log("Html5Qrcode zainicjalizowany.");
+                } catch (e) {
+                    console.error("Nie można utworzyć instancji Html5Qrcode:", e);
+                    showError("Krytyczny błąd: Nie można załadować biblioteki skanera.");
+                    return;
+                }
+            }
+
+            const config = { 
+                fps: 10, 
+                qrbox: { width: 250, height: 250 },
+                aspectRatio: 1.0 
+            };
+            
+            // Ponieważ uprawnienia mamy już przyznane (po kliknięciu przycisku 'Start'),
+            // ta funkcja nie powinna już wywoływać blokującego modala.
+            html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanFailure)
+                .then(() => {
+                    console.log("Skaner uruchomiony.");
+                    // Pokaż UI skanowania
+                    stopButton.classList.remove('hidden');
+                    startScanButton.classList.add('hidden');
+                    statusSection.classList.add('hidden');
+                })
+                .catch(err => {
+                    console.error("Nie można uruchomić skanera", err);
+                    showError("Nie udało się uruchomić kamery. Sprawdź uprawnienia.");
+                    // Wróć do stanu "Idle"
+                    stopButton.classList.add('hidden');
+                    qrReaderDiv.classList.add('hidden');
+                    startScanButton.classList.remove('hidden');
+                });
+        };
+
+        const stopScanner = async () => {
+            try {
+                if (html5QrCode && html5QrCode.isScanning) {
+                    await html5QrCode.stop();
+                    console.log("Skaner zatrzymany.");
+                }
+            } catch (err) {
+                console.error("Błąd podczas zatrzymywania skanera", err);
+            } finally {
+                // Zawsze wracaj do stanu "Idle" po zatrzymaniu
+                stopButton.classList.add('hidden');
+                qrReaderDiv.classList.add('hidden');
+                startScanButton.classList.remove('hidden');
+            }
+        };
+
+        // --- LOGIKA BAZY DANYCH ---
+
+        const fetchFamilyData = async (familyId) => {
+            if (!currentUserId) {
+                showError("Błąd: Użytkownik nie jest zalogowany.");
+                return;
+            }
+            
+            console.log(`Szukam w 'rodziny/${familyId}' jako zalogowany user: ${currentUserId}`);
+            const docRef = doc(db, "rodziny", familyId);
+            
+            try {
+                const docSnap = await getDoc(docRef);
+                
+                if (docSnap.exists()) {
+                    console.log("Pobrano dane:", docSnap.data());
+                    displayData(docSnap.data());
+                } else {
+                    console.warn("Nie znaleziono dokumentu o ID:", familyId);
+                    showError(`Nie znaleziono rodziny o kodzie: ${familyId}`);
+                }
+            } catch (error) {
+                console.error("Błąd podczas pobierania danych:", error);
+                showError(`Wystąpił błąd: ${error.message}`);
+            } finally {
+                showLoading(false);
+                scanAgainButton.classList.remove('hidden'); // Pokaż "Skanuj Ponownie"
+                startScanButton.classList.add('hidden'); // Ukryj "Start"
+            }
+        };
+
+        // --- KONTROLA UI ---
+
+        const displayData = (data) => {
+            let html = `<h3 class="text-xl font-bold mb-2">${data.nazwisko || 'Brak nazwiska'}</h3>`;
+            html += `<p class="text-sm text-gray-700"><strong>Adres:</strong> ${data.adres || 'Brak danych'}</p>`;
+            html += `<p class="text-sm text-gray-700"><strong>Status:</strong> <span class="font-semibold ${data.status === 'Oczekująca' ? 'text-yellow-600' : 'text-green-600'}">${data.status || 'Brak'}</span></p>`;
+            html += `<hr class="my-2">`;
+            html += `<p class="text-sm text-gray-700"><strong>Opis/Potrzeby:</strong></p>`;
+            html += `<p class="text-sm text-gray-600 whitespace-pre-wrap">${data.opis || 'Brak opisu'}</p>`;
+            
+            resultDisplay.innerHTML = html;
+            resultDisplay.classList.remove('hidden');
+        };
+
+        const showLoading = (isLoading) => {
+            loader.classList.toggle('hidden', !isLoading);
+        };
+
+        const showError = (message) => {
+            if (message) {
+                errorMessage.textContent = message;
+                errorMessage.classList.remove('hidden');
+            } else {
+                errorMessage.classList.add('hidden');
+            }
+        };
+
+        // --- LOGIKA AUTORYZACJI (LOGOWANIA) ---
+        
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                console.log("Użytkownik zalogowany:", user.uid);
+                currentUserId = user.uid;
+                userEmail.textContent = user.email || 'Użytkownik';
+                userIdDisplay.textContent = `UserID: ${user.uid}`; 
+                
+                loginSection.classList.add('hidden');
+                appSection.classList.remove('hidden');
+                
+                // **** LOGIKA PRZYCISKU START ****
+                // Pokazujemy przycisk "Start"
+                startScanButton.classList.remove('hidden');
+                qrReaderDiv.classList.add('hidden');
+                stopButton.classList.add('hidden');
+                statusSection.classList.add('hidden');
+                
+            } else {
+                console.log("Użytkownik wylogowany.");
+                currentUserId = null;
+                
+                loginSection.classList.remove('hidden');
+                appSection.classList.add('hidden');
+                loginError.classList.add('hidden');
+                
+                stopScanner(); // Posprzątaj po skanerze
+            }
+        });
+
+        // Obsługa formularza logowania
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            loginError.classList.add('hidden');
+            
+            try {
+                console.log("Próba logowania:", email);
+                await signInWithEmailAndPassword(auth, email, password);
+                // Resztą zajmie się `onAuthStateChanged`
+            } catch (error) {
+                console.error("Błąd logowania:", error.code, error.message);
+                loginError.textContent = `Błąd logowania: ${error.message}`;
+                loginError.classList.remove('hidden');
+            }
+        });
+
+        // Obsługa wylogowania
+        logoutButton.addEventListener('click', async () => {
+            console.log("Wylogowywanie...");
+            await signOut(auth);
+            // Resztą zajmie się `onAuthStateChanged`
+        });
+
+        // **** NOWY LISTENER DLA PRZYCISKU START ****
+        startScanButton.addEventListener('click', async () => {
+            console.log("Przycisk 'Start' wciśnięty. Ręcznie proszę o uprawnienia do kamery...");
+            statusSection.classList.add('hidden'); // Ukryj błędy, jeśli były
+            
+            // KROK 1: Ręcznie poproś o kamerę, aby wywołać modal uprawnień.
+            try {
+                // Prosimy o tylną kamerę
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                
+                // Natychmiast zatrzymujemy strumień, nie potrzebujemy go.
+                // Chcieliśmy tylko, aby użytkownik kliknął "Zezwalaj".
+                stream.getTracks().forEach(track => track.stop());
+                console.log("Uprawnienia do kamery przyznane.");
+
+                // KROK 2: Teraz, gdy uprawnienia są przyznane, bezpiecznie uruchamiamy skaner.
+                // `startScanner()` nie wywoła już blokującego modala.
+                startScanButton.classList.add('hidden');
+                qrReaderDiv.classList.remove('hidden');
+                startScanner(); // Ta funkcja teraz nie powinna nic blokować
+
+            } catch (err) {
+                // Użytkownik kliknął "Blokuj"
+                console.error("Użytkownik odmówił dostępu do kamery:", err);
+                showError("Odmówiłeś dostępu do kamery. Skaner nie może działać.");
+                statusSection.classList.remove('hidden');
+            }
+        });
+        // **** KONIEC ZMIAN ****
+
+
+        // Obsługa "Skanuj ponownie"
+        scanAgainButton.addEventListener('click', () => {
+            statusSection.classList.add('hidden');
+            qrReaderDiv.classList.remove('hidden');
+            startScanner();
+        });
+
+    </script>
+</body>
+</html>
